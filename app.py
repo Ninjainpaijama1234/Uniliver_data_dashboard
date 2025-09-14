@@ -1,7 +1,7 @@
 # app.py
 # Streamlit dashboard for skincare_survey_mumbai_120.csv
 # Light Unilever-inspired theme (soft azure / mint / lilac) applied via CSS.
-# Charts and analytics logic preserved; only styling and one chart colorization updated.
+# Charts and analytics logic preserved; styling + one chart colorization updated.
 
 import io
 import os
@@ -380,18 +380,7 @@ def sidebar_filters(df: pd.DataFrame) -> pd.DataFrame:
 # -------------------------------- #
 def tab_overview(df: pd.DataFrame):
     st.subheader("Overview")
-    st.markdown("Data audit, structure, and key distributions.")
-
-    # Data audit table (missingness chart removed as requested)
-    audit = pd.DataFrame({
-        "column": df.columns,
-        "dtype": [str(df[c].dtype) for c in df.columns],
-        "non_null": df.notna().sum().values,
-        "missing": df.isna().sum().values,
-        "missing_%": (df.isna().mean().values*100).round(1),
-    })
-    st.markdown("**Data audit**")
-    st.dataframe(audit, use_container_width=True)
+    st.markdown("Key distributions at a glance.")
 
     # Segment & gender pies
     cols = st.columns(2)
