@@ -5,9 +5,7 @@
 
 import io
 import os
-import sys
 import math
-import json
 import warnings
 from typing import Dict, List, Tuple
 
@@ -27,7 +25,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score, cross_validate
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score, roc_auc_score,
-    confusion_matrix, mean_squared_error, mean_absolute_error, r2_score, RocCurveDisplay
+    confusion_matrix, mean_squared_error, mean_absolute_error, r2_score
 )
 from sklearn.inspection import permutation_importance, PartialDependenceDisplay
 
@@ -44,8 +42,8 @@ LIKERT_MAP = {
     "PBC": [f"PBC{i}" for i in range(1, 6)],
     "BI":  [f"BI{i}"  for i in range(1, 5)],
     "AUT": [f"AUT{i}" for i in range(1, 7)],  # AUT3 is "pressure" (reverse-coded in theory)
-    "COMP":[f"COMP{i}" for i in range(1, 5+1)],
-    "REL": [f"REL{i}" for i in range(1, 4+1)],
+    "COMP":[f"COMP{i}" for i in range(1, 6)],
+    "REL": [f"REL{i}" for i in range(1, 5)],
 }
 
 CORE_COLS = [
@@ -67,19 +65,17 @@ def set_page():
         initial_sidebar_state="expanded"
     )
     st.title("💧 Skincare Behavior Intelligence — TPB/SDT Decision Cockpit")
-    st.caption("Robust, manager-ready dashboard • Mumbai cohort (ages 21–30) • Likert composites & predictive levers")
+    st.caption("Manager-ready dashboard • Mumbai cohort (ages 21–30) • Likert composites & predictive levers")
 
 def require_cols(df: pd.DataFrame, required: List[str]) -> Tuple[bool, List[str]]:
     missing = [c for c in required if c not in df.columns]
-    ok = len(missing) == 0
-    return ok, missing
+    return (len(missing) == 0, missing)
 
 @st.cache_data(show_spinner=False)
 def load_csv(uploaded_file: io.BytesIO = None) -> pd.DataFrame:
     # Priority 1: uploaded file
     if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file)
-        return df
+        return pd.read_csv(uploaded_file)
     # Priority 2: local ./data file
     for try_path in ["./data/skincare_survey_mumbai_120.csv", "skincare_survey_mumbai_120.csv"]:
         if os.path.exists(try_path):
@@ -102,8 +98,8 @@ def strip_whitespace_and_cast(df: pd.DataFrame) -> pd.DataFrame:
         df["Age"] = pd.to_numeric(df["Age"], errors="coerce").round().astype("Int64")
     if "Monthly_Spend" in df.columns:
         df["Monthly_Spend"] = pd.to_numeric(df["Monthly_Spend"], errors="coerce").astype(float)
-    # Likert to int 1–5 (coerce invalid)
-    for group, items in LIKERT_MAP.items():
+    # Likert to int 1–5
+    for items in LIKERT_MAP.values():
         for col in items:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").clip(1,5).round().astype("Int64")
@@ -125,8 +121,7 @@ def cronbach_alpha(df_items: pd.DataFrame) -> float:
     k = df_items.shape[1]
     if total_var == 0:
         return np.nan
-    alpha = (k / (k - 1)) * (1 - (item_vars.sum() / total_var))
-    return float(alpha)
+    return float((k / (k - 1)) * (1 - (item_vars.sum() / total_var)))
 
 def calc_composites(df: pd.DataFrame, reverse_AUT3_for_alpha: bool=False) -> Tuple[pd.DataFrame, Dict[str,float]]:
     composites = {}
@@ -138,7 +133,7 @@ def calc_composites(df: pd.DataFrame, reverse_AUT3_for_alpha: bool=False) -> Tup
             continue
         block = df[available].astype(float)
 
-        # Optional reverse-coding of AUT3 ONLY for alpha computation (display remains raw)
+        # Optional reverse-coding of AUT3 ONLY for alpha computation
         if name == "AUT" and reverse_AUT3_for_alpha and "AUT3" in available:
             block_rc = block.copy()
             block_rc["AUT3"] = 6 - block_rc["AUT3"]
@@ -156,14 +151,13 @@ def anova_or_kruskal(df: pd.DataFrame, metric: str, group: str="User_Type") -> T
     if metric not in df.columns or group not in df.columns:
         return ("N/A", np.nan)
     groups = []
-    for g, sub in df.groupby(group):
+    for _, sub in df.groupby(group):
         vals = pd.to_numeric(sub[metric], errors="coerce").dropna()
         if len(vals) >= 6:
             groups.append(vals)
     if len(groups) < 2:
         return ("N/A", np.nan)
 
-    # Normality check (if any group fails normality, use Kruskal)
     normal = True
     for vals in groups:
         if len(vals) < 12:
@@ -201,7 +195,6 @@ def compute_cooccurrence(items_series: pd.Series, top_k: int = 25) -> List[Tuple
             for j in range(i+1, len(parts)):
                 key = (parts[i], parts[j])
                 pairs[key] = pairs.get(key, 0) + 1
-    # top pairs
     ranked = sorted([(a,b,c) for (a,b),c in pairs.items()], key=lambda x: x[2], reverse=True)[:top_k]
     return ranked
 
@@ -281,7 +274,7 @@ def tab_overview(df: pd.DataFrame):
     })
     st.dataframe(audit, use_container_width=True)
 
-    # Missingness heatmap (by column, percentage bar chart)
+    # Missingness bar (by column)
     fig, ax = plt.subplots(figsize=(10, 2.8))
     ax.barh(audit["column"], audit["missing_%"])
     ax.set_xlabel("Missing (%)")
@@ -293,18 +286,16 @@ def tab_overview(df: pd.DataFrame):
     # Segment & gender pies
     cols = st.columns(2)
     with cols[0]:
-        if "User_Type" in df.columns:
-            sizes = df["User_Type"].value_counts().values
-            labels = df["User_Type"].value_counts().index.tolist()
+        if "User_Type" in df.columns and not df["User_Type"].dropna().empty:
+            vc = df["User_Type"].value_counts()
             fig1, ax1 = plt.subplots(figsize=(4,4))
-            safe_pie(ax1, sizes, labels, "User Type Mix")
+            safe_pie(ax1, vc.values, vc.index.tolist(), "User Type Mix")
             st.pyplot(fig1)
     with cols[1]:
-        if "Gender" in df.columns:
-            sizes = df["Gender"].value_counts().values
-            labels = df["Gender"].value_counts().index.tolist()
+        if "Gender" in df.columns and not df["Gender"].dropna().empty:
+            vc = df["Gender"].value_counts()
             fig2, ax2 = plt.subplots(figsize=(4,4))
-            safe_pie(ax2, sizes, labels, "Gender Mix")
+            safe_pie(ax2, vc.values, vc.index.tolist(), "Gender Mix")
             st.pyplot(fig2)
 
     # Income & Education bars
@@ -337,8 +328,6 @@ def tab_overview(df: pd.DataFrame):
 
 def tab_segments_personas(df: pd.DataFrame):
     st.subheader("Segments & Personas")
-    needed = ["User_Type","Monthly_Spend","Is_Satisfied","Recommendation","Switching_Brands"]
-    ok, miss = require_cols(df, [c for c in needed if c in df.columns])
     if "User_Type" not in df.columns:
         st.warning("Missing `User_Type` — segment KPIs unavailable.")
         return
@@ -349,8 +338,8 @@ def tab_segments_personas(df: pd.DataFrame):
         "count": g.size(),
         "share_%": (g.size()/len(df)*100).round(1),
         "avg_Monthly_Spend": g["Monthly_Spend"].mean().round(1) if "Monthly_Spend" in df.columns else np.nan,
-        "pct_satisfied": (g["Is_Satisfied"].apply(lambda x: (x=="Yes").mean())*100).round(1) if "Is_Satisfied" in df.columns else np.nan,
-        "pct_recommend": (g["Recommendation"].apply(lambda x: (x=="Yes").mean())*100).round(1) if "Recommendation" in df.columns else np.nan
+        "pct_satisfied": (g["Is_Satisfied"].apply(lambda s: (s=="Yes").mean())*100).round(1) if "Is_Satisfied" in df.columns else np.nan,
+        "pct_recommend": (g["Recommendation"].apply(lambda s: (s=="Yes").mean())*100).round(1) if "Recommendation" in df.columns else np.nan
     })
     st.dataframe(kpi, use_container_width=True)
 
@@ -370,17 +359,16 @@ def tab_segments_personas(df: pd.DataFrame):
     def chi_block(col: str, title: str):
         if col in df.columns:
             ct = pd.crosstab(df["User_Type"], df[col])
-            chi2, p, dof, exp = stats.chi2_contingency(ct)
+            chi2, p, _, _ = stats.chi2_contingency(ct)
             st.markdown(f"**{title}** (χ²={chi2:.2f}, p={p:.4f})")
             st.dataframe(ct)
 
-    chi_cols = [("Gender","User_Type × Gender"),
-                ("Monthly_Income","User_Type × Income"),
-                ("Education","User_Type × Education")]
-    for c, t in chi_cols:
+    for c, t in [("Gender","User_Type × Gender"),
+                 ("Monthly_Income","User_Type × Income"),
+                 ("Education","User_Type × Education")]:
         chi_block(c, t)
 
-    # Persona cards (simple)
+    # Persona cards
     st.markdown("### Persona Cards (Top Signals)")
     for seg in df["User_Type"].dropna().unique():
         sub = df[df["User_Type"]==seg]
@@ -410,11 +398,10 @@ def tab_tpb_sdt(df: pd.DataFrame):
             data = [pd.to_numeric(df2[df2["User_Type"]==g][c], errors="coerce").dropna().values
                     for g in df2["User_Type"].dropna().unique()]
             labels = df2["User_Type"].dropna().unique().tolist()
-            # use violinplot if groups ok else boxplot
             try:
                 ax.violinplot(data, showmeans=True, showmedians=False)
                 ax.set_xticks(np.arange(1, len(labels)+1))
-                ax.set_xticklabels(labels, rotation=0)
+                ax.set_xticklabels(labels)
                 ax.set_title(f"{c} by User_Type")
             except Exception:
                 ax.boxplot(data)
@@ -423,7 +410,6 @@ def tab_tpb_sdt(df: pd.DataFrame):
                 ax.set_title(f"{c} by User_Type")
             st.pyplot(fig)
 
-            # test
             test_name, pval = anova_or_kruskal(df2, c, "User_Type")
             st.caption(f"Test: {test_name} • p={pval:.4f}" if not np.isnan(pval) else "Insufficient data for test.")
 
@@ -469,7 +455,7 @@ def tab_barriers_motivators(df: pd.DataFrame):
         else:
             st.info("No Motivators data to display.")
 
-    # Co-occurrence network (Barriers + Motivators separately)
+    # Co-occurrence networks
     for title, series in [("Barrier Co-occurrences", df["Barriers"] if "Barriers" in df.columns else pd.Series(dtype=str)),
                           ("Motivator Co-occurrences", df["Motivators"] if "Motivators" in df.columns else pd.Series(dtype=str))]:
         pairs = compute_cooccurrence(series, top_k=25)
@@ -489,7 +475,7 @@ def tab_barriers_motivators(df: pd.DataFrame):
         ax.axis("off")
         st.pyplot(fig)
 
-    # Needle movers (simple heuristic): top correlates of BI and Future_Purchase_Intent via composites
+    # Needle movers (simple): top correlates of BI via composites
     df2, _ = calc_composites(df, reverse_AUT3_for_alpha=True)
     if "BI" in df2.columns:
         st.markdown("**What would move the needle (BI predictors, Spearman ρ)**")
@@ -521,8 +507,7 @@ def _prepare_regression(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.Series, List
     sub = df2[df2["Monthly_Spend"] > 0].copy()
     if sub.empty:
         return pd.DataFrame(), pd.Series(dtype=float), [], []
-    y = sub["Monthly_Spend"].astype(float)
-    y = winsorize_series(y)
+    y = winsorize_series(sub["Monthly_Spend"].astype(float))
     numeric = [c for c in ["ATT","SN","PBC","BI","AUT","COMP","REL","Age"] if c in sub.columns]
     cat = []
     if "Gender" in sub.columns: cat.append("Gender")
@@ -549,9 +534,8 @@ def tab_predict_explain(df: pd.DataFrame):
     X, y, num_cols, cat_cols = _prepare_features(df)
     if not X.empty:
         st.markdown("**Classification: Frequent vs Others**")
-        # CV fallback
         folds = 5 if len(y) >= 80 else 3
-        class_weight = "balanced" if y.value_counts().min() / y.value_counts().max() < 0.6 else None
+        class_weight = "balanced" if y.value_counts().min() / max(1, y.value_counts().max()) < 0.6 else None
 
         pre = ColumnTransformer(
             transformers=[
@@ -583,9 +567,9 @@ def tab_predict_explain(df: pd.DataFrame):
 
         # CV
         cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=RANDOM_STATE)
-        cv_scores = cross_validate(clf, X, y, scoring=["accuracy","precision","recall","f1","roc_auc"], cv=cv, n_jobs=None)
+        cv_scores = cross_validate(clf, X, y, scoring=["accuracy","precision","recall","f1","roc_auc"], cv=cv)
         st.caption("Cross-Validation (mean±std)")
-        st.dataframe(pd.Series({k: f"{np.mean(v):.3f}±{np.std(v):.3f}" for k,v in cv_scores.items() if k.startswith("test_")}))
+        st.dataframe(pd.Series({k.replace("test_",""): f"{np.mean(v):.3f}±{np.std(v):.3f}" for k,v in cv_scores.items() if k.startswith("test_")}))
 
         # Confusion Matrix
         cm = confusion_matrix(y_test, y_pred)
@@ -595,9 +579,7 @@ def tab_predict_explain(df: pd.DataFrame):
         try:
             result = permutation_importance(clf, X_test, y_test, n_repeats=10, random_state=RANDOM_STATE)
             importances = result.importances_mean
-            # Build feature names
-            # Note: full column names after OHE are complex; for interpretability, we show base columns
-            feat_names = num_cols + cat_cols
+            feat_names = num_cols + cat_cols  # approximate base feature names
             imp = pd.Series(importances[:len(feat_names)], index=feat_names).sort_values(ascending=False)
             fig, ax = plt.subplots(figsize=(6,3))
             ax.bar(imp.index[:10], np.abs(imp.values[:10]))
@@ -613,7 +595,7 @@ def tab_predict_explain(df: pd.DataFrame):
             for feat in top_for_pdp:
                 try:
                     fig, ax = plt.subplots(figsize=(5,3))
-                    display = PartialDependenceDisplay.from_estimator(
+                    PartialDependenceDisplay.from_estimator(
                         clf, X_test, [feat], kind="average", ax=ax,
                         response_method="predict_proba", grid_resolution=20
                     )
@@ -643,8 +625,12 @@ def tab_predict_explain(df: pd.DataFrame):
         X_train, X_test, y_train, y_test = train_test_split(Xr, yr, test_size=0.25, random_state=RANDOM_STATE)
         rf.fit(X_train, y_train)
         y_hat = rf.predict(X_test)
+
+        # ---- FIX: explicit RMSE without using the `squared` kwarg for compatibility ----
+        mse_val = mean_squared_error(y_test, y_hat)
+        rmse_val = float(np.sqrt(mse_val))
         metrics_r = {
-            "RMSE": mean_squared_error(y_test, y_hat, squared=False),
+            "RMSE": rmse_val,
             "MAE": mean_absolute_error(y_test, y_hat),
             "R2": r2_score(y_test, y_hat)
         }
@@ -671,7 +657,7 @@ def tab_reco_roi(df: pd.DataFrame):
             deltas[c] = st.slider(f"Δ{c}", -1.0, 1.0, 0.0, 0.1)
     barrier_reduct = st.slider("Barrier reduction (%) — conceptual (affects narrative KPIs only)", 0, 50, 0, 5)
 
-    # Classification baseline and re-score uplift in frequent share + recommendation rate
+    # Classification baseline and re-score uplift
     X, y, num_cols, cat_cols = _prepare_features(df2)
     if not X.empty:
         # Apply deltas (only on numeric composites present)
@@ -698,10 +684,9 @@ def tab_reco_roi(df: pd.DataFrame):
         base_freq = (base_prob >= 0.5).mean()
         new_freq  = (new_prob  >= 0.5).mean()
 
-        # Recommendation proxy: if column exists, report actual; else model via BI if present
+        # Recommendation proxy
         if "Recommendation" in df2.columns:
             rec_rate = (df2["Recommendation"] == "Yes").mean()
-            # assume uplift proportional to average delta on ATT/SN/PBC (heuristic)
             avg_delta = np.mean([deltas.get(k,0) for k in ["ATT","SN","PBC"] if k in X.columns]) if ["ATT","SN","PBC"] else 0
             rec_uplift = max(0.0, min(0.1, 0.02 + 0.05*avg_delta))  # cap 10pp
             new_rec = min(1.0, rec_rate + rec_uplift)
@@ -721,7 +706,6 @@ def tab_reco_roi(df: pd.DataFrame):
                 )
                 rf = Pipeline(steps=[("prep", pre_r), ("rf", RandomForestRegressor(n_estimators=300, random_state=RANDOM_STATE))])
                 rf.fit(Xr, yr)
-                # apply deltas on composites subset
                 Xr_adj = Xr.copy()
                 for c, d in deltas.items():
                     if c in Xr_adj.columns:
@@ -733,7 +717,6 @@ def tab_reco_roi(df: pd.DataFrame):
         else:
             spend_base = spend_new = np.nan
 
-        # Barrier narrative impact
         st.markdown("### Uplift Results")
         colA, colB, colC = st.columns(3)
         with colA:
@@ -793,7 +776,7 @@ def main():
     with tabs[5]:
         tab_reco_roi(df_f)
 
-    # Export plots (example: correlation heatmap re-generated quickly with composites)
+    # Export example: correlation heatmap
     df2, _ = calc_composites(df_f, reverse_AUT3_for_alpha=True)
     comps_all = [c for c in ["ATT","SN","PBC","BI","AUT","COMP","REL"] if c in df2.columns]
     if comps_all:
@@ -809,8 +792,7 @@ def main():
         png = fig_to_download(fig)
         st.download_button("⬇ Download Correlation Heatmap (PNG)", data=png, file_name="correlation_heatmap.png", mime="image/png")
 
-    # Footer
-    st.caption("Built with Streamlit • Matplotlib • scikit-learn • statsmodels/scipy • NetworkX | All charts seaborn-free.")
+    st.caption("Built with Streamlit • Matplotlib • scikit-learn • SciPy • NetworkX | All charts seaborn-free.")
 
 if __name__ == "__main__":
     main()
