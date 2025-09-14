@@ -463,44 +463,86 @@ def tab_segments_personas(df: pd.DataFrame):
     st.dataframe(kpi, use_container_width=True)
 
     if "Switching_Brands" in df.columns:
+        def tab_segments_personas(df: pd.DataFrame):
+    st.subheader("Segments & Personas")
+    if "User_Type" not in df.columns:
+        st.warning("Missing `User_Type` — segment KPIs unavailable.")
+        return
+
+    # KPI table by User_Type
+    g = df.groupby("User_Type")
+    kpi = pd.DataFrame({
+        "count": g.size(),
+        "share_%": (g.size()/len(df)*100).round(1),
+        "avg_Monthly_Spend": g["Monthly_Spend"].mean().round(1) if "Monthly_Spend" in df.columns else np.nan,
+        "pct_satisfied": (g["Is_Satisfied"].apply(lambda s: (s == "Yes").mean())*100).round(1) if "Is_Satisfied" in df.columns else np.nan,
+        "pct_recommend": (g["Recommendation"].apply(lambda s: (s == "Yes").mean())*100).round(1) if "Recommendation" in df.columns else np.nan,
+    })
+    st.dataframe(kpi, use_container_width=True)
+
+    # Themed stacked bars for Switching Behavior
+    if "Switching_Brands" in df.columns:
         pivot = pd.crosstab(df["User_Type"], df["Switching_Brands"], normalize="index")
 
-# Light Unilever-inspired palette for switching categories
-# (falls back gracefully if a level is missing)
-SWITCH_COLORS = {
-    "Never":     "#1F70C1",  # Unilever blue
-    "Rarely":    "#77C3FF",  # light azure
-    "Sometimes": "#BBAAF7",  # soft lilac
-    "Often":     "#74D4B3",  # mint
-}
+        # Light Unilever palette per switching category (fallbacks if levels missing)
+        SWITCH_COLORS = {
+            "Never": "#1F70C1",      # Unilever blue
+            "Rarely": "#77C3FF",     # light azure
+            "Sometimes": "#BBAAF7",  # soft lilac
+            "Often": "#74D4B3",      # mint
+        }
 
-fig, ax = plt.subplots(figsize=(7, 3))
-left = np.zeros(len(pivot))
+        fig, ax = plt.subplots(figsize=(7, 3))
+        left = np.zeros(len(pivot))
+        for col in pivot.columns:
+            ax.bar(
+                pivot.index,
+                pivot[col].values,
+                bottom=left,
+                label=col,
+                color=SWITCH_COLORS.get(col, None),
+                edgecolor="white",
+                linewidth=1.0,
+            )
+            left += pivot[col].values
 
-# Preserve current column order; color if known
-for col in pivot.columns:
-    ax.bar(
-        pivot.index,
-        pivot[col].values,
-        bottom=left,
-        label=col,
-        color=SWITCH_COLORS.get(col, None),
-        edgecolor="white",
-        linewidth=1.0,
-    )
-    left += pivot[col].values
+        ax.set_title("Switching Behavior by Segment (row-normalized)")
+        leg = ax.legend(loc="upper right", fontsize=8, frameon=True)
+        if leg and leg.get_frame():
+            leg.get_frame().set_alpha(0.9)
+            leg.get_frame().set_edgecolor("#D6E6FF")
+        st.pyplot(fig)
 
-ax.set_title("Switching Behavior by Segment (row-normalized)")
-leg = ax.legend(
-    loc="upper right",
-    fontsize=8,
-    frameon=True,
-)
-if leg and leg.get_frame():
-    leg.get_frame().set_alpha(0.9)
-    leg.get_frame().set_edgecolor("#D6E6FF")  # subtle border to match theme
+    # Chi-square crosstabs (helper defined at top-level indentation)
+    def chi_block(col: str, title: str):
+        if col in df.columns:
+            ct = pd.crosstab(df["User_Type"], df[col])
+            chi2, p, _, _ = stats.chi2_contingency(ct)
+            st.markdown(f"**{title}** (χ²={chi2:.2f}, p={p:.4f})")
+            st.dataframe(ct)
 
-st.pyplot(fig)
+    for c, t in [
+        ("Gender", "User_Type × Gender"),
+        ("Monthly_Income", "User_Type × Income"),
+        ("Education", "User_Type × Education"),
+    ]:
+        chi_block(c, t)
+
+    # Persona cards
+    st.markdown("### Persona Cards (Top Signals)")
+    for seg in df["User_Type"].dropna().unique():
+        sub = df[df["User_Type"] == seg]
+        info = sub["Info_Source"].value_counts().head(3).index.tolist() if "Info_Source" in sub.columns else []
+        brands = sub["Brand_Preference"].value_counts().head(3).index.tolist() if "Brand_Preference" in sub.columns else []
+        bars = explode_multiselect(sub, "Barriers")["Barriers"].value_counts().head(3).index.tolist() if "Barriers" in sub.columns else []
+        mots = explode_multiselect(sub, "Motivators")["Motivators"].value_counts().head(3).index.tolist() if "Motivators" in sub.columns else []
+        st.info(
+            f"**{seg}** • Info Sources: {', '.join(info) if info else 'N/A'} | "
+            f"Brands: {', '.join(brands) if brands else 'N/A'} | "
+            f"Barriers: {', '.join(bars) if bars else 'N/A'} | "
+            f"Motivators: {', '.join(mots) if mots else 'N/A'}"
+        )
+
 
     def chi_block(col: str, title: str):
         if col in df.columns:
