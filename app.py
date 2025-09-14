@@ -589,7 +589,7 @@ def tab_tpb_sdt(df: pd.DataFrame):
 
     # Box/violin by User_Type
     if "User_Type" in df2.columns:
-        comps = [c for c in ["ATT","SN","PBC","BI","AUT","COMP","REL"] if c in df2.columns]
+        comps = [c for c in ["Attitude","Subjective Norms","Perceived Behavioral Control","Behavioral Intention","Autonomy","Competence","Relatedness"] if c in df2.columns]
         for c in comps:
             fig, ax = plt.subplots(figsize=(6, 3))
             data = [pd.to_numeric(df2[df2["User_Type"] == g][c], errors="coerce").dropna().values
