@@ -2,6 +2,7 @@
 # Streamlit dashboard for skincare_survey_mumbai_120.csv
 # Light Unilever-inspired theme (soft azure / mint / lilac) applied via CSS.
 # Charts and analytics logic preserved; styling + one chart colorization updated.
+# Co-occurrence graphs de-cluttered with Top-N nodes + min-weight edge filtering.
 
 import io
 import os
@@ -39,10 +40,10 @@ LIKERT_MAP = {
     "ATT": [f"ATT{i}" for i in range(1, 8)],
     "SN":  [f"SN{i}"  for i in range(1, 7)],
     "PBC": [f"PBC{i}" for i in range(1, 6)],
-    "BI":  [f"BI{i}"  for i in range(1, 5)],
-    "AUT": [f"AUT{i}" for i in range(1, 7)],  # AUT3 can be reverse-coded for alpha if toggled
-    "COMP":[f"COMP{i}" for i in range(1, 6)],
-    "REL": [f"REL{i}" for i in range(1, 5)],
+    "BI":  [f"BI{i}"  for i in range(1, 4+1)],
+    "AUT": [f"AUT{i}" for i in range(1, 6+1)],  # AUT3 can be reverse-coded for alpha if toggled
+    "COMP":[f"COMP{i}" for i in range(1, 5+1)],
+    "REL": [f"REL{i}" for i in range(1, 4+1)],
 }
 
 CORE_COLS = [
@@ -288,7 +289,7 @@ def anova_or_kruskal(df: pd.DataFrame, metric: str, group: str="User_Type") -> T
         if len(vals) < 12:
             normal = False
             break
-        _, p = stats.shapiro(vals.sample(min(500, len(vals)), random_state=RANDOM_STATE))
+        _, p = stats.shapiro(vals.sample(min(500, len(vals)), random_state=42))
         if p < 0.05:
             normal = False
             break
@@ -335,6 +336,76 @@ def safe_pie(ax, sizes, labels, title=""):
         return
     ax.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=140)
     ax.set_title(title)
+
+# ---------- New helpers for decluttered co-occurrence graphs ----------
+def _token_counts(series: pd.Series) -> pd.Series:
+    """Frequency of individual comma-separated tokens."""
+    tokens = []
+    for entry in series.dropna().astype(str):
+        tokens.extend([t.strip() for t in entry.split(",") if t.strip()])
+    return pd.Series(tokens).value_counts()
+
+def _wrap_label(s: str, width: int = 16) -> str:
+    import textwrap
+    return "\n".join(textwrap.wrap(s, width=width)) if s else s
+
+def draw_cooccurrence_network(title: str, series: pd.Series, top_n: int = 8, min_w: int = 2):
+    """
+    Cleaner co-occurrence network with node/edge filtering and readable labels.
+    - top_n: keep only the N most frequent items (by token frequency)
+    - min_w: show edges only if the pair co-occurs at least min_w times
+    """
+    if series is None or series.dropna().empty:
+        st.info(f"No co-occurrence pairs for {title}.")
+        return
+
+    # Select top-N nodes
+    counts = _token_counts(series)
+    if counts.empty:
+        st.info(f"No co-occurrence pairs for {title}.")
+        return
+    keep_nodes = set(counts.head(top_n).index.tolist())
+
+    # Build weighted edges among kept nodes
+    pairs = {}
+    for entry in series.dropna().astype(str):
+        parts = sorted(set([p.strip() for p in entry.split(",") if p.strip()]))
+        parts = [p for p in parts if p in keep_nodes]
+        for i in range(len(parts)):
+            for j in range(i+1, len(parts)):
+                key = (parts[i], parts[j])
+                pairs[key] = pairs.get(key, 0) + 1
+
+    edges = [(a, b, w) for (a, b), w in pairs.items() if w >= min_w]
+    if not edges:
+        st.info(f"No edges ≥ {min_w} for {title}. Try lowering the threshold or increasing Top-N.")
+        return
+
+    G = nx.Graph()
+    G.add_weighted_edges_from(edges)
+
+    # Sizing and layout
+    deg_w = dict(G.degree(weight="weight"))
+    node_sizes = [300 + 250 * deg_w[n] for n in G.nodes()]
+    max_w = max([d for _, _, d in G.edges(data="weight")])
+    edge_widths = [1.0 + 1.8*(w/max_w) for _, _, w in G.edges(data="weight")]
+    edge_alphas = [0.25 + 0.55*(w/max_w) for _, _, w in G.edges(data="weight")]
+
+    layout = nx.kamada_kawai_layout(G) if len(G.nodes()) <= 9 else nx.spring_layout(G, seed=42, k=0.9)
+
+    # Draw
+    fig_h = 4.5 if len(G.nodes()) <= 7 else 5.5
+    fig, ax = plt.subplots(figsize=(7.5, fig_h))
+    nx.draw_networkx_nodes(G, layout, node_size=node_sizes, node_color="#77C3FF",
+                           edgecolors="#1F70C1", linewidths=0.8, ax=ax)
+    for (u, v, w), ew, ea in zip(G.edges(data="weight"), edge_widths, edge_alphas):
+        nx.draw_networkx_edges(G, layout, edgelist=[(u, v)], width=ew, edge_color="#1F70C1", alpha=ea, ax=ax)
+    labels = {n: _wrap_label(n, 18) for n in G.nodes()}
+    nx.draw_networkx_labels(G, layout, labels=labels, font_size=9, font_color="#2F3B52", ax=ax)
+
+    ax.set_title(title)
+    ax.axis("off")
+    st.pyplot(fig)
 
 # -------------------------------- #
 # --------- SIDEBAR UI ----------- #
@@ -581,27 +652,21 @@ def tab_barriers_motivators(df: pd.DataFrame):
         else:
             st.info("No Motivators data to display.")
 
-    # Co-occurrence networks
-    for title, series in [
-        ("Barrier Co-occurrences", df["Barriers"] if "Barriers" in df.columns else pd.Series(dtype=str)),
-        ("Motivator Co-occurrences", df["Motivators"] if "Motivators" in df.columns else pd.Series(dtype=str))
-    ]:
-        pairs = compute_cooccurrence(series, top_k=25)
-        if not pairs:
-            st.info(f"No co-occurrence pairs for {title}.")
-            continue
-        G = nx.Graph()
-        for a, b, w in pairs:
-            G.add_edge(a, b, weight=int(w))
-        pos = nx.spring_layout(G, seed=RANDOM_STATE, k=0.9)
-        fig, ax = plt.subplots(figsize=(6, 4))
-        weights = [G[u][v]['weight'] for u, v in G.edges()]
-        nx.draw_networkx_nodes(G, pos, ax=ax, node_size=600)
-        nx.draw_networkx_labels(G, pos, ax=ax, font_size=8)
-        nx.draw_networkx_edges(G, pos, ax=ax, width=[0.5 + 0.3*w for w in weights])
-        ax.set_title(title)
-        ax.axis("off")
-        st.pyplot(fig)
+    # --- De-cluttered co-occurrence networks with controls ---
+    st.markdown("#### Co-occurrence Networks (filtered)")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        top_n = st.slider("Top-N items", 5, 12, 8, 1, help="Show only the most frequent items.")
+    with c2:
+        min_w = st.slider("Min co-occurrence", 1, 5, 2, 1, help="Hide weak edges below this threshold.")
+    with c3:
+        st.caption("Node size → weighted degree; edge width/opacity → co-occurrence strength.")
+
+    series_b = df["Barriers"] if "Barriers" in df.columns else pd.Series(dtype=str)
+    series_m = df["Motivators"] if "Motivators" in df.columns else pd.Series(dtype=str)
+
+    draw_cooccurrence_network("Barrier Co-occurrences", series_b, top_n=top_n, min_w=min_w)
+    draw_cooccurrence_network("Motivator Co-occurrences", series_m, top_n=top_n, min_w=min_w)
 
     # Needle movers (simple): top correlates of BI via composites
     df2, _ = calc_composites(df, reverse_AUT3_for_alpha=True)
