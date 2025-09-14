@@ -1,7 +1,7 @@
 # app.py
 # Streamlit dashboard for skincare_survey_mumbai_120.csv
-# Tabs: Overview, Segments & Personas, TPB/SDT, Barriers & Motivators, Predict & Explain, Recommendations & ROI
-# Matplotlib-only charts (no seaborn). Robust guards; caching; reproducible CV; exports.
+# Visual refresh: light Unilever-inspired theme (soft azure / mint / lilac) applied via CSS.
+# Core functionality, charts, and data logic unchanged.
 
 import io
 import os
@@ -41,7 +41,7 @@ LIKERT_MAP = {
     "SN":  [f"SN{i}"  for i in range(1, 7)],
     "PBC": [f"PBC{i}" for i in range(1, 6)],
     "BI":  [f"BI{i}"  for i in range(1, 5)],
-    "AUT": [f"AUT{i}" for i in range(1, 7)],  # AUT3 is "pressure" (reverse-coded in theory)
+    "AUT": [f"AUT{i}" for i in range(1, 7)],
     "COMP":[f"COMP{i}" for i in range(1, 6)],
     "REL": [f"REL{i}" for i in range(1, 5)],
 }
@@ -55,6 +55,159 @@ CORE_COLS = [
 ]
 
 # -------------------------------- #
+# ---------- THEME CSS ----------- #
+# -------------------------------- #
+def apply_brand_theme():
+    """
+    Inject a light Unilever-inspired theme without altering charts or layouts.
+    Palette:
+      Primary:   #1F70C1 (Unilever Blue) used sparingly for accents
+      Azure-50:  #F5FAFF (app bg)
+      Azure-100: #E8F2FF (cards)
+      Mint-100:  #EAFBF4 (soft success)
+      Lilac-100: #F3F0FF (secondary accents)
+      Slate-700: #2F3B52 (text)
+    """
+    st.markdown(
+        """
+        <style>
+        :root{
+          --pri:#1F70C1;
+          --bg:#F5FAFF;
+          --card:#E8F2FF;
+          --card2:#F3F0FF;
+          --mint:#EAFBF4;
+          --text:#2F3B52;
+          --muted:#6B7A90;
+          --border:#D6E6FF;
+          --shadow: 0 8px 22px rgba(31,112,193,0.10);
+          --radius:18px;
+        }
+        /* App background */
+        .stApp {
+          background: linear-gradient(180deg, rgba(31,112,193,0.06) 0%, rgba(31,112,193,0.00) 40%), var(--bg);
+        }
+        /* Main container width + padding */
+        .block-container{
+          padding-top: 1.2rem;
+          padding-bottom: 2rem;
+        }
+        /* Titles */
+        h1, h2, h3, h4 {
+          color: var(--text) !important;
+          letter-spacing: 0.2px;
+        }
+        /* Subtle pill caption under H1 */
+        .stMarkdown > p, .stCaption, .st-emotion-cache-17ziqus p {
+          color: var(--muted) !important;
+        }
+        /* Cards: dataframe wrapper, metrics, info/warning boxes */
+        .stDataFrame, .stTable, .stAlert, .stSuccess, .stInfo, .stWarning, .stError{
+          border-radius: var(--radius) !important;
+          box-shadow: var(--shadow);
+        }
+        /* Dataframe toolbar/background */
+        div[data-testid="stDataFrame"] > div{
+          background: var(--card) !important;
+          border-radius: var(--radius) !important;
+          border: 1px solid var(--border);
+        }
+        /* Metric cards */
+        div[data-testid="stMetric"]{
+          background: var(--mint);
+          padding: 14px 16px;
+          border-radius: var(--radius);
+          border: 1px solid #DDF3EA;
+          box-shadow: var(--shadow);
+        }
+        div[data-testid="stMetric"] label{
+          color: var(--muted);
+        }
+        div[data-testid="stMetricValue"]{
+          color: var(--text);
+        }
+        /* Sidebar */
+        section[data-testid="stSidebar"]{
+          background: linear-gradient(180deg, rgba(31,112,193,0.07) 0%, rgba(31,112,193,0.00) 60%), #FFFFFF;
+          border-right: 1px solid var(--border);
+        }
+        section[data-testid="stSidebar"] .stMarkdown p, section[data-testid="stSidebar"] label{
+          color: var(--text);
+        }
+        /* Buttons */
+        .stButton>button{
+          background: linear-gradient(180deg, #ffffff 0%, #E8F2FF 100%);
+          color: var(--text);
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 0.5rem 1rem;
+          box-shadow: var(--shadow);
+        }
+        .stButton>button:hover{
+          border-color: var(--pri);
+          box-shadow: 0 10px 26px rgba(31,112,193,0.18);
+        }
+        /* Download buttons */
+        .stDownloadButton>button{
+          background: linear-gradient(180deg, #ffffff 0%, #E8F2FF 100%);
+          color: var(--text);
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 0.5rem 1rem;
+          box-shadow: var(--shadow);
+        }
+        /* Tabs */
+        .stTabs [data-baseweb="tab-list"]{
+          gap: 6px;
+        }
+        .stTabs [data-baseweb="tab"]{
+          background: #FFFFFF;
+          border: 1px solid var(--border);
+          border-bottom-color: transparent;
+          border-top-left-radius: 12px;
+          border-top-right-radius: 12px;
+          padding: 10px 14px;
+          color: var(--muted);
+        }
+        .stTabs [aria-selected="true"]{
+          background: var(--card2) !important;
+          color: var(--text) !important;
+          border-color: var(--pri) !important;
+        }
+        /* Selects, sliders */
+        div[data-baseweb="select"]>div{
+          background: #FFFFFF !important;
+          border-radius: 10px;
+          border: 1px solid var(--border);
+        }
+        .stSlider > div > div > div{
+          background: linear-gradient(90deg, var(--pri), #77C3FF);
+        }
+        /* Charts canvases retain default styles; wrap in soft card */
+        .stPlotlyChart, .stPyplot{
+          background: #FFFFFF;
+          border-radius: var(--radius);
+          padding: 6px 6px 2px 6px;
+          box-shadow: var(--shadow);
+          border: 1px solid var(--border);
+        }
+        /* Info boxes tint */
+        .stInfo{
+          background: #F0F6FF !important;
+          border: 1px solid var(--border) !important;
+        }
+        /* Small code blocks / captions */
+        code, .stCode{
+          background: #F7FAFF !important;
+          color: var(--text) !important;
+          border-radius: 8px !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+# -------------------------------- #
 # ---------- UTILITIES ----------- #
 # -------------------------------- #
 def set_page():
@@ -64,6 +217,7 @@ def set_page():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+    apply_brand_theme()  # <-- inject the theme early
     st.title("💧 Skincare Behavior Intelligence — TPB/SDT Decision Cockpit")
     st.caption("Manager-ready dashboard • Mumbai cohort (ages 21–30) • Likert composites & predictive levers")
 
@@ -242,7 +396,6 @@ def tab_overview(df: pd.DataFrame):
     st.subheader("Overview")
     st.markdown("Data audit, structure, and key distributions.")
 
-    # Data audit table (graph removed per request)
     audit = pd.DataFrame({
         "column": df.columns,
         "dtype": [str(df[c].dtype) for c in df.columns],
@@ -253,7 +406,6 @@ def tab_overview(df: pd.DataFrame):
     st.markdown("**Data audit**")
     st.dataframe(audit, use_container_width=True)
 
-    # Segment & gender pies
     cols = st.columns(2)
     with cols[0]:
         if "User_Type" in df.columns and not df["User_Type"].dropna().empty:
@@ -268,7 +420,6 @@ def tab_overview(df: pd.DataFrame):
             safe_pie(ax2, vc.values, vc.index.tolist(), "Gender Mix")
             st.pyplot(fig2)
 
-    # Income & Education bars
     cols2 = st.columns(2)
     with cols2[0]:
         if "Monthly_Income" in df.columns:
@@ -287,7 +438,6 @@ def tab_overview(df: pd.DataFrame):
             ax4.set_title("Education Distribution")
             st.pyplot(fig4)
 
-    # Locality top-10
     if "Locality" in df.columns:
         topn = df["Locality"].value_counts().head(10)
         fig5, ax5 = plt.subplots(figsize=(8,3.2))
