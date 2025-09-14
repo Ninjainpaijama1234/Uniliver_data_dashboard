@@ -464,14 +464,43 @@ def tab_segments_personas(df: pd.DataFrame):
 
     if "Switching_Brands" in df.columns:
         pivot = pd.crosstab(df["User_Type"], df["Switching_Brands"], normalize="index")
-        fig, ax = plt.subplots(figsize=(7,3))
-        left = np.zeros(len(pivot))
-        for col in pivot.columns:
-            ax.bar(pivot.index, pivot[col].values, bottom=left, label=col)
-            left += pivot[col].values
-        ax.set_title("Switching Behavior by Segment (row-normalized)")
-        ax.legend(loc="upper right", fontsize=8)
-        st.pyplot(fig)
+
+# Light Unilever-inspired palette for switching categories
+# (falls back gracefully if a level is missing)
+SWITCH_COLORS = {
+    "Never":     "#1F70C1",  # Unilever blue
+    "Rarely":    "#77C3FF",  # light azure
+    "Sometimes": "#BBAAF7",  # soft lilac
+    "Often":     "#74D4B3",  # mint
+}
+
+fig, ax = plt.subplots(figsize=(7, 3))
+left = np.zeros(len(pivot))
+
+# Preserve current column order; color if known
+for col in pivot.columns:
+    ax.bar(
+        pivot.index,
+        pivot[col].values,
+        bottom=left,
+        label=col,
+        color=SWITCH_COLORS.get(col, None),
+        edgecolor="white",
+        linewidth=1.0,
+    )
+    left += pivot[col].values
+
+ax.set_title("Switching Behavior by Segment (row-normalized)")
+leg = ax.legend(
+    loc="upper right",
+    fontsize=8,
+    frameon=True,
+)
+if leg and leg.get_frame():
+    leg.get_frame().set_alpha(0.9)
+    leg.get_frame().set_edgecolor("#D6E6FF")  # subtle border to match theme
+
+st.pyplot(fig)
 
     def chi_block(col: str, title: str):
         if col in df.columns:
